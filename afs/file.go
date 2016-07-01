@@ -21,6 +21,7 @@ import (
 )
 
 type File struct {
+	w writer
 }
 
 func (f *File) Stat() (os.FileInfo, error) {
