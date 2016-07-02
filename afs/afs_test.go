@@ -19,13 +19,10 @@ func TestWriter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f, err := fs.Open("/a/file/I/like")
-	if err != nil {
+	if err := writeFile(fs, "/file/a", "loopy\n"); err != nil {
 		t.Fatal(err)
 	}
-	buf := &bytes.Buffer{}
-	buf.WriteString("loopy\n")
-	if _, err := io.Copy(f, buf); err != nil {
+	if err := writeFile(fs, "/file/b", "loopier\n"); err != nil {
 		t.Fatal(err)
 	}
 	uuid, err := fs.Finalize()
@@ -33,4 +30,18 @@ func TestWriter(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Log(uuid)
+}
+
+func writeFile(fs *FileSystem, name, body string) error {
+	f, err := fs.Open(name)
+	if err != nil {
+		return err
+	}
+	buf := &bytes.Buffer{}
+	buf.WriteString(body)
+	if _, err := io.Copy(f, buf); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
