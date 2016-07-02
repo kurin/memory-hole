@@ -17,17 +17,47 @@
 package afs
 
 import (
+	"bytes"
+	"encoding/binary"
+	"encoding/json"
 	"io"
+	"os"
+	"path/filepath"
 	"sync"
+
+	"github.com/twinj/uuid"
 )
 
 type FileSystem struct {
 	uuid string
-	wc   writer
+	w    *writer
+	m    *metadata
+}
+
+func New(dir string) (*FileSystem, error) {
+	u := uuid.NewV4().String()
+	f, err := os.Create(filepath.Join(dir, u))
+	if err != nil {
+		return nil, err
+	}
+	m := &metadata{
+		Offsets: make(map[string][][2]int64),
+	}
+	return &FileSystem{
+		uuid: u,
+		m:    m,
+		w: &writer{
+			wc:   f,
+			meta: m,
+		},
+	}, nil
 }
 
 func (fs *FileSystem) Open(name string) (*File, error) {
-	return nil, nil
+	return &File{
+		name: name,
+		w:    fs.w,
+	}, nil
 }
 
 func (fs *FileSystem) Remove(name string) error {
@@ -35,9 +65,24 @@ func (fs *FileSystem) Remove(name string) error {
 }
 
 func (fs *FileSystem) Finalize() (string, error) {
-	return "", nil
+	enc := json.NewEncoder(fs.w.wc)
+	if err := enc.Encode(fs.m); err != nil {
+		fs.w.wc.Close()
+		return "", err
+	}
+	b := make([]byte, 10)
+	binary.PutVarint(b, fs.w.pos)
+	if _, err := io.Copy(fs.w.wc, bytes.NewBuffer(b)); err != nil {
+		fs.w.wc.Close()
+		return "", err
+	}
+	if err := fs.w.wc.Close(); err != nil {
+		return "", err
+	}
+	return fs.uuid, nil
 }
 
+// TODO: move this all into fs
 type writer struct {
 	meta *metadata
 	mux  sync.Mutex
@@ -57,9 +102,9 @@ func (w *writer) write(name string, p []byte) (int, error) {
 }
 
 type metadata struct {
-	offsets map[string][][2]int64
+	Offsets map[string][][2]int64
 }
 
 func (m *metadata) update(name string, pos, off int64) {
-	m.offsets[name] = append(m.offsets[name], [2]int64{pos, off})
+	m.Offsets[name] = append(m.Offsets[name], [2]int64{pos, off})
 }

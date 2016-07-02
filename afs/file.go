@@ -21,7 +21,8 @@ import (
 )
 
 type File struct {
-	w writer
+	name string
+	w    *writer
 }
 
 func (f *File) Stat() (os.FileInfo, error) {
@@ -29,7 +30,7 @@ func (f *File) Stat() (os.FileInfo, error) {
 }
 
 func (f *File) Write(b []byte) (int, error) {
-	return 0, nil
+	return f.w.write(f.name, b)
 }
 
 func (f *File) Read(b []byte) (int, error) {
