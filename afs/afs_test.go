@@ -25,6 +25,15 @@ func TestWriter(t *testing.T) {
 	if err := writeFile(fs, "/file/b", "loopier\n"); err != nil {
 		t.Fatal(err)
 	}
+	if err := writeFile(fs, "/file/c", "loopiest\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Remove("/file/b"); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Remove("/file/d"); err != nil {
+		t.Fatal(err)
+	}
 	uuid, err := fs.Finalize()
 	if err != nil {
 		t.Fatal(err)

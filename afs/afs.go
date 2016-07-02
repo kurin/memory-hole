@@ -62,7 +62,15 @@ func (fs *FileSystem) Open(name string) (*os.File, error) {
 }
 
 func (fs *FileSystem) Remove(name string) error {
-	return nil
+	fs.mux.Lock()
+	defer fs.mux.Unlock()
+
+	u, ok := fs.fmap[name]
+	if !ok {
+		return nil
+	}
+	delete(fs.fmap, name)
+	return os.Remove(filepath.Join(fs.wdir, u))
 }
 
 func (fs *FileSystem) Finalize() (string, error) {
