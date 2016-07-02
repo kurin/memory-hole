@@ -17,10 +17,6 @@
 package afs
 
 import (
-	"bytes"
-	"encoding/binary"
-	"encoding/json"
-	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -30,34 +26,39 @@ import (
 
 type FileSystem struct {
 	uuid string
-	w    *writer
-	m    *metadata
+	wdir string
+	mux  sync.RWMutex
+	fmap map[string]string
 }
 
 func New(dir string) (*FileSystem, error) {
 	u := uuid.NewV4().String()
-	f, err := os.Create(filepath.Join(dir, u))
-	if err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, u), 0700); err != nil {
 		return nil, err
-	}
-	m := &metadata{
-		Offsets: make(map[string][][2]int64),
 	}
 	return &FileSystem{
 		uuid: u,
-		m:    m,
-		w: &writer{
-			wc:   f,
-			meta: m,
-		},
+		wdir: filepath.Join(dir, u),
+		fmap: make(map[string]string),
 	}, nil
 }
 
-func (fs *FileSystem) Open(name string) (*File, error) {
-	return &File{
-		name: name,
-		w:    fs.w,
-	}, nil
+func (fs *FileSystem) Open(name string) (*os.File, error) {
+	fs.mux.RLock()
+	u, ok := fs.fmap[name]
+	fs.mux.RUnlock()
+	var create bool
+	if !ok {
+		u = uuid.NewV4().String()
+		fs.mux.Lock()
+		fs.fmap[name] = u
+		fs.mux.Unlock()
+		create = true
+	}
+	if create {
+		return os.Create(filepath.Join(fs.wdir, u))
+	}
+	return os.Open(filepath.Join(fs.wdir, u))
 }
 
 func (fs *FileSystem) Remove(name string) error {
@@ -65,46 +66,5 @@ func (fs *FileSystem) Remove(name string) error {
 }
 
 func (fs *FileSystem) Finalize() (string, error) {
-	enc := json.NewEncoder(fs.w.wc)
-	if err := enc.Encode(fs.m); err != nil {
-		fs.w.wc.Close()
-		return "", err
-	}
-	b := make([]byte, 10)
-	binary.PutVarint(b, fs.w.pos)
-	if _, err := io.Copy(fs.w.wc, bytes.NewBuffer(b)); err != nil {
-		fs.w.wc.Close()
-		return "", err
-	}
-	if err := fs.w.wc.Close(); err != nil {
-		return "", err
-	}
-	return fs.uuid, nil
-}
-
-// TODO: move this all into fs
-type writer struct {
-	meta *metadata
-	mux  sync.Mutex
-	wc   io.WriteCloser
-	pos  int64
-}
-
-func (w *writer) write(name string, p []byte) (int, error) {
-	w.mux.Lock()
-	defer w.mux.Unlock()
-
-	start := w.pos
-	n, err := w.wc.Write(p)
-	w.pos += int64(n)
-	w.meta.update(name, start, int64(n))
-	return n, err
-}
-
-type metadata struct {
-	Offsets map[string][][2]int64
-}
-
-func (m *metadata) update(name string, pos, off int64) {
-	m.Offsets[name] = append(m.Offsets[name], [2]int64{pos, off})
+	return "", nil
 }
