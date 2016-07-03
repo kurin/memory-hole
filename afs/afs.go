@@ -43,7 +43,7 @@ func New(dir string) (*FileSystem, error) {
 	}, nil
 }
 
-func (fs *FileSystem) Open(name string) (*os.File, error) {
+func (fs *FileSystem) Open(name string) (*File, error) {
 	fs.mux.RLock()
 	u, ok := fs.fmap[name]
 	fs.mux.RUnlock()
@@ -55,10 +55,20 @@ func (fs *FileSystem) Open(name string) (*os.File, error) {
 		fs.mux.Unlock()
 		create = true
 	}
+	var f *os.File
+	var err error
 	if create {
-		return os.Create(filepath.Join(fs.wdir, u))
+		f, err = os.Create(filepath.Join(fs.wdir, u))
+	} else {
+		f, err = os.Open(filepath.Join(fs.wdir, u))
 	}
-	return os.Open(filepath.Join(fs.wdir, u))
+	if err != nil {
+		return nil, err
+	}
+	return &File{
+		File: f,
+		name: name,
+	}, nil
 }
 
 func (fs *FileSystem) Remove(name string) error {
