@@ -32,9 +32,11 @@ func main() {
 	ch := make(chan os.Signal)
 	signal.Notify(ch, os.Interrupt)
 	go func() {
-		<-ch
-		if err := fuse.Unmount(fs.Mountpoint); err != nil {
-			log.Printf("unmount: %v", err)
+		for {
+			<-ch
+			if err := fuse.Unmount(fs.Mountpoint); err != nil {
+				log.Printf("unmount: %v", err)
+			}
 		}
 	}()
 	if err := fs.Mount(); err != nil {
