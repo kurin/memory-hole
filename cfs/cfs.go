@@ -68,17 +68,23 @@ func (f *FS) Close() error {
 }
 
 func (f *FS) Root() (fs.Node, error) {
-	return f, nil
+	return &root{
+		db: f.db,
+	}, nil
 }
 
-func (f *FS) Attr(ctx context.Context, attr *fuse.Attr) error {
+type root struct {
+	db *bolt.DB
+}
+
+func (r *root) Attr(ctx context.Context, attr *fuse.Attr) error {
 	attr.Mode = os.ModeDir | 0700
 	return nil
 }
 
-func (f *FS) Lookup(ctx context.Context, name string) (fs.Node, error) {
+func (r *root) Lookup(ctx context.Context, name string) (fs.Node, error) {
 	var a *archive
-	if err := f.db.View(func(tx *bolt.Tx) error {
+	if err := r.db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte("archives"))
 		if b == nil {
 			return nil
@@ -106,9 +112,9 @@ func (f *FS) Lookup(ctx context.Context, name string) (fs.Node, error) {
 	return a, nil
 }
 
-func (f *FS) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, error) {
+func (r *root) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, error) {
 	u := uuid.NewV4()
-	if err := f.db.Update(func(tx *bolt.Tx) error {
+	if err := r.db.Update(func(tx *bolt.Tx) error {
 		ab, err := tx.CreateBucketIfNotExists([]byte("archives"))
 		if err != nil {
 			return err
@@ -127,9 +133,9 @@ func (f *FS) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, error)
 	}, nil
 }
 
-func (f *FS) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
+func (r *root) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	var ent []fuse.Dirent
-	if err := f.db.View(func(tx *bolt.Tx) error {
+	if err := r.db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte("archives"))
 		if b == nil {
 			return nil
@@ -147,11 +153,11 @@ func (f *FS) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	return ent, nil
 }
 
-func (f *FS) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
+func (r *root) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 	if !req.Dir {
 		return fuse.ENOTSUP
 	}
-	if err := f.db.Update(func(tx *bolt.Tx) error {
+	if err := r.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte("archives"))
 		if b == nil {
 			return fuse.ENOENT
@@ -173,6 +179,60 @@ type archive struct {
 }
 
 func (a *archive) Attr(ctx context.Context, attr *fuse.Attr) error {
+	attr.Mode = os.ModeDir | 0700
+	return nil
+}
+
+func (a *archive) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
+	out := []fuse.Dirent{
+		{Name: "data", Type: fuse.DT_Dir},
+		{Name: "status", Type: fuse.DT_File},
+	}
+	if !a.final {
+		out = append(out, fuse.Dirent{Name: "done", Type: fuse.DT_File})
+	}
+	return out, nil
+}
+
+func (a *archive) Lookup(ctx context.Context, name string) (fs.Node, error) {
+	switch name {
+	case "done":
+		if !a.final {
+			return &done{}, nil
+		}
+	case "data":
+		return &data{
+			uuid: a.uuid,
+		}, nil
+	}
+	return nil, fuse.ENOENT
+}
+
+type done struct{}
+
+var donemsg = []byte("Remove this file to finalize this archive.\n")
+
+func (done) Attr(ctx context.Context, attr *fuse.Attr) error {
+	attr.Size = uint64(len(donemsg))
+	attr.Mode = 0644
+	return nil
+}
+
+func (done) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
+	off := int(req.Offset)
+	end := off + req.Size
+	if end > len(donemsg) {
+		end = len(donemsg)
+	}
+	resp.Data = donemsg[off:end]
+	return nil
+}
+
+type data struct {
+	uuid string
+}
+
+func (data) Attr(ctx context.Context, attr *fuse.Attr) error {
 	attr.Mode = os.ModeDir | 0700
 	return nil
 }
