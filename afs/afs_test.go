@@ -31,8 +31,8 @@ func TestWriter(t *testing.T) {
 	if err := fs.Remove("/file/b"); err != nil {
 		t.Fatal(err)
 	}
-	if err := fs.Remove("/file/d"); err != nil {
-		t.Fatal(err)
+	if err := fs.Remove("/file/d"); err == nil {
+		t.Error("expected an error removing '/file/d', got none")
 	}
 	uuid, err := fs.Finalize()
 	if err != nil {

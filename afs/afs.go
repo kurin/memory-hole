@@ -19,7 +19,6 @@ package afs
 import (
 	"os"
 	"path/filepath"
-	"sync"
 
 	"github.com/twinj/uuid"
 )
@@ -27,8 +26,7 @@ import (
 type FileSystem struct {
 	uuid string
 	wdir string
-	mux  sync.RWMutex
-	fmap map[string]string
+	root *node
 }
 
 func New(dir string) (*FileSystem, error) {
@@ -39,24 +37,24 @@ func New(dir string) (*FileSystem, error) {
 	return &FileSystem{
 		uuid: u,
 		wdir: filepath.Join(dir, u),
-		fmap: make(map[string]string),
+		root: &node{dir: true},
 	}, nil
 }
 
 func (fs *FileSystem) Open(name string) (*File, error) {
-	fs.mux.RLock()
-	u, ok := fs.fmap[name]
-	fs.mux.RUnlock()
 	var create bool
-	if !ok {
-		u = uuid.NewV4().String()
-		fs.mux.Lock()
-		fs.fmap[name] = u
-		fs.mux.Unlock()
+	n, err := fs.root.get(name)
+	if err != nil {
+		add, err := fs.root.add(name)
+		if err != nil {
+			return nil, err
+		}
 		create = true
+		add.uuid = uuid.NewV4().String()
+		n = add
 	}
+	u := n.uuid
 	var f *os.File
-	var err error
 	if create {
 		f, err = os.Create(filepath.Join(fs.wdir, u))
 	} else {
@@ -72,15 +70,11 @@ func (fs *FileSystem) Open(name string) (*File, error) {
 }
 
 func (fs *FileSystem) Remove(name string) error {
-	fs.mux.Lock()
-	defer fs.mux.Unlock()
-
-	u, ok := fs.fmap[name]
-	if !ok {
-		return nil
+	n, err := fs.root.remove(name, true)
+	if err != nil {
+		return err
 	}
-	delete(fs.fmap, name)
-	return os.Remove(filepath.Join(fs.wdir, u))
+	return os.Remove(filepath.Join(fs.wdir, n.uuid))
 }
 
 func (fs *FileSystem) Finalize() (string, error) {
