@@ -74,6 +74,10 @@ func (fs *FileSystem) Open(name string) (*File, error) {
 	}, nil
 }
 
+func (fs *FileSystem) Mkdir(name string) error {
+	return fs.root.mkdir(name)
+}
+
 func (fs *FileSystem) Remove(name string) error {
 	u, err := fs.root.get(name)
 	if err != nil {
