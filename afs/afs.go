@@ -38,10 +38,14 @@ func Open(dir, u string) (*FileSystem, error) {
 	if err != nil {
 		return nil, err
 	}
+	t := &tdb{db: db}
+	if err := t.init(); err != nil {
+		return nil, err
+	}
 	return &FileSystem{
 		uuid: u,
 		wdir: filepath.Join(dir, u),
-		root: &tdb{db: db},
+		root: t,
 	}, nil
 }
 

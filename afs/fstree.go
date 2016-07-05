@@ -32,6 +32,20 @@ const (
 	fileType      = 0x02
 )
 
+func (t *tdb) init() error {
+	return t.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte("/"))
+		if b != nil {
+			return nil
+		}
+		nb, err := tx.CreateBucket([]byte("/"))
+		if err != nil {
+			return err
+		}
+		return nb.Put([]byte("type"), []byte{dirType})
+	})
+}
+
 func (t *tdb) mkdir(name string) error {
 	path := strings.Trim(name, "/")
 	parts := strings.Split(path, "/")
@@ -75,6 +89,9 @@ func (t *tdb) list(name string) ([]tent, error) {
 			return fmt.Errorf("%s: can't access /", name)
 		}
 		for i := 0; i < len(parts); i++ {
+			if parts[i] == "" {
+				continue
+			}
 			b = b.Bucket([]byte(parts[i]))
 			if b == nil {
 				return fmt.Errorf("%s: can't access %s", name, parts[i])
@@ -125,6 +142,9 @@ func (t *tdb) add(name, id string) error {
 			return fmt.Errorf("%s: can't access /", name)
 		}
 		for i := 0; i < len(parts); i++ {
+			if parts[i] == "" {
+				continue
+			}
 			b = b.Bucket([]byte(parts[i]))
 			if b == nil {
 				return fmt.Errorf("%s: can't access %s", name, parts[i])

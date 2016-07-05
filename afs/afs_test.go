@@ -58,6 +58,9 @@ func TestWriter(t *testing.T) {
 				},
 			},
 		},
+		{
+			dir: "/",
+		},
 	}
 
 	for _, e := range table {
@@ -72,7 +75,7 @@ func TestWriter(t *testing.T) {
 				continue
 			}
 		}
-		ls, err := fs.List("/thing")
+		ls, err := fs.List(e.dir)
 		if err != nil {
 			t.Error(err)
 			continue
