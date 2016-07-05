@@ -313,3 +313,36 @@ func (d *data) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	}
 	return out, nil
 }
+
+func (d *data) Lookup(ctx context.Context, name string) (fs.Node, error) {
+	ls, err := d.fs.List(d.path)
+	if err != nil {
+		return nil, err
+	}
+	var found bool
+	for _, e := range ls {
+		if e.Name == name {
+			found = true
+			break
+		}
+	} // TODO: easy speedups here
+	if !found {
+		return nil, fuse.ENOENT
+	}
+	return &data{
+		uuid: d.uuid,
+		path: filepath.Join(d.path, name),
+		fs:   d.fs,
+	}, nil
+}
+
+func (d *data) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, error) {
+	if err := d.fs.Mkdir(filepath.Join(d.path, req.Name)); err != nil {
+		return nil, err
+	}
+	return &data{
+		uuid: d.uuid,
+		path: filepath.Join(d.path, req.Name),
+		fs:   d.fs,
+	}, nil
+}
