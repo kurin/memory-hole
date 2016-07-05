@@ -15,118 +15,162 @@
 package afs
 
 import (
-	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
-	"sync"
+
+	"github.com/boltdb/bolt"
+	"github.com/twinj/uuid"
 )
 
-type node struct {
-	dir  bool
-	mux  sync.Mutex
-	sub  map[string]*node
-	uuid string
+type tdb struct {
+	db *bolt.DB
 }
 
-func (n *node) mkdir(name string) (*node, error) {
-	if !n.dir {
-		return nil, errors.New("not a directory")
-	}
-	s := strings.TrimPrefix(name, "/")
-	i := strings.Index(s, "/")
-	var rest string
-	if i > -1 {
-		rest = s[i:]
-		s = s[:i]
-	}
-	n.mux.Lock()
-	defer n.mux.Unlock()
-	if n.sub == nil {
-		n.sub = make(map[string]*node)
-	}
-	if rest == "" {
-		g, ok := n.sub[s]
-		if ok && !g.dir {
-			return nil, fmt.Errorf("%s: already exists", name)
+const (
+	dirType  byte = 0x01
+	fileType      = 0x02
+)
+
+func (t *tdb) mkdir(name string) error {
+	return t.db.Update(func(tx *bolt.Tx) error {
+		b, err := tx.CreateBucketIfNotExists([]byte("/"))
+		if err != nil {
+			return err
 		}
-		if ok {
-			return g, nil
+		for {
+			name = strings.TrimPrefix(name, "/")
+			i := strings.Index(name, "/")
+			var rest string
+			if i != -1 {
+				rest = name[i:]
+				name = name[:i]
+			}
+			b, err := b.CreateBucketIfNotExists([]byte(name))
+			if err != nil {
+				return err
+			}
+			bt := b.Get([]byte("type"))
+			if len(bt) == 0 {
+				if err := b.Put([]byte("type"), []byte{dirType}); err != nil {
+					return err
+				}
+			} else if bt[0] != dirType {
+				return fmt.Errorf("%s: not a directory", name)
+			}
+			if rest == "" {
+				return nil
+			}
+			name = rest
 		}
-		end := &node{dir: true}
-		n.sub[s] = end
-		return end, nil
-	}
-	if _, ok := n.sub[s]; !ok {
-		n.sub[s] = &node{dir: true}
-	}
-	return n.sub[s].mkdir(rest)
+	})
 }
 
-func (n *node) add(name string) (*node, error) {
+func (t *tdb) add(name, id string) error {
 	path := filepath.Dir(name)
 	base := filepath.Base(name)
-	dir, err := n.mkdir(path)
-	if err != nil {
-		return nil, err
+
+	if err := t.mkdir(path); err != nil {
+		return err
 	}
-	dir.mux.Lock()
-	defer dir.mux.Unlock()
-	if dir.sub == nil {
-		dir.sub = make(map[string]*node)
-	}
-	end := &node{}
-	dir.sub[base] = end
-	return end, nil
+
+	path = strings.Trim(path, "/")
+	parts := strings.Split(path, "/")
+
+	return t.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte("/"))
+		if b == nil {
+			return fmt.Errorf("%s: can't access /", name)
+		}
+		for i := 0; i < len(parts); i++ {
+			b = b.Bucket([]byte(parts[i]))
+			if b == nil {
+				return fmt.Errorf("%s: can't access %s", name, parts[i])
+			}
+		}
+		b, err := b.CreateBucket([]byte(base))
+		if err != nil {
+			return err
+		}
+		if err := b.Put([]byte("type"), []byte{fileType}); err != nil {
+			return err
+		}
+		u, err := uuid.Parse(id)
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte("uuid"), u.Bytes())
+	})
 }
 
-func (n *node) get(name string) (*node, error) {
-	n.mux.Lock()
-	defer n.mux.Unlock()
+func (t *tdb) get(name string) (string, error) {
+	path := filepath.Dir(name)
+	base := filepath.Base(name)
 
-	s := strings.TrimPrefix(name, "/")
-	i := strings.Index(s, "/")
-	var rest string
-	if i > -1 {
-		rest = s[i:]
-		s = s[:i]
-	}
+	path = strings.Trim(path, "/")
+	parts := strings.Split(path, "/")
 
-	g, ok := n.sub[s]
-	if !ok {
-		return nil, fmt.Errorf("%s: no such file or directory", name)
+	var u string
+	if err := t.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte("/"))
+		if b == nil {
+			return fmt.Errorf("%s: can't access /", name)
+		}
+		for i := 0; i < len(parts); i++ {
+			b = b.Bucket([]byte(parts[i]))
+			if b == nil {
+				return fmt.Errorf("%s: can't access %s", name, parts[i])
+			}
+		}
+		b = b.Bucket([]byte(base))
+		if b == nil {
+			return fmt.Errorf("%s: no such file or directory", name)
+		}
+		bt := b.Get([]byte("type"))
+		if len(bt) == 0 || bt[0] != fileType {
+			return fmt.Errorf("%s: not a file", name)
+		}
+		u = uuid.New(b.Get([]byte("uuid"))).String()
+		return nil
+	}); err != nil {
+		return "", err
 	}
-	if rest == "" {
-		return g, nil
-	}
-	return g.get(rest)
+	return u, nil
 }
 
-func (n *node) remove(name string, rmdir bool) (*node, error) {
-	dir := filepath.Dir(name)
-	d, err := n.get(dir)
-	if err != nil {
-		return nil, err
-	}
+func (t *tdb) remove(name string) error {
+	path := filepath.Dir(name)
+	base := filepath.Base(name)
 
-	d.mux.Lock()
-	defer d.mux.Unlock()
+	path = strings.Trim(path, "/")
+	parts := strings.Split(path, "/")
 
-	sd, ok := d.sub[filepath.Base(name)]
-	if !ok {
-		return nil, fmt.Errorf("%s: no such file or directory", name)
-	}
-	sd.mux.Lock()
-	defer sd.mux.Unlock()
-
-	if sd.dir && !rmdir {
-		return nil, fmt.Errorf("%s: is a directory")
-	}
-
-	if len(sd.sub) > 0 {
-		return nil, fmt.Errorf("%s: directory not empty")
-	}
-
-	delete(d.sub, filepath.Base(name))
-	return sd, nil
+	return t.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte("/"))
+		if b == nil {
+			return fmt.Errorf("%s: can't access /", name)
+		}
+		for i := 0; i < len(parts); i++ {
+			b = b.Bucket([]byte(parts[i]))
+			if b == nil {
+				return fmt.Errorf("%s: can't access %s", name, parts[i])
+			}
+		}
+		p := b
+		b = b.Bucket([]byte(base))
+		if b == nil {
+			return fmt.Errorf("%s: no such file or directory", name)
+		}
+		var c int
+		b.ForEach(func(k, v []byte) error {
+			if v == nil {
+				c++
+			}
+			return nil
+		})
+		if c > 0 {
+			return fmt.Errorf("%s: directory not empty", name)
+		}
+		return p.DeleteBucket([]byte(base))
+	})
 }

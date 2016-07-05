@@ -20,13 +20,14 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/boltdb/bolt"
 	"github.com/twinj/uuid"
 )
 
 type FileSystem struct {
 	uuid string
 	wdir string
-	root *node
+	root *tdb
 }
 
 func New(dir string) (*FileSystem, error) {
@@ -34,26 +35,27 @@ func New(dir string) (*FileSystem, error) {
 	if err := os.MkdirAll(filepath.Join(dir, u), 0700); err != nil {
 		return nil, err
 	}
+	db, err := bolt.Open(filepath.Join(dir, u, "bolt.db"), 0600, nil)
+	if err != nil {
+		return nil, err
+	}
 	return &FileSystem{
 		uuid: u,
 		wdir: filepath.Join(dir, u),
-		root: &node{dir: true},
+		root: &tdb{db: db},
 	}, nil
 }
 
 func (fs *FileSystem) Open(name string) (*File, error) {
 	var create bool
-	n, err := fs.root.get(name)
+	u, err := fs.root.get(name)
 	if err != nil {
-		add, err := fs.root.add(name)
-		if err != nil {
+		u = uuid.NewV4().String()
+		if err := fs.root.add(name, u); err != nil {
 			return nil, err
 		}
 		create = true
-		add.uuid = uuid.NewV4().String()
-		n = add
 	}
-	u := n.uuid
 	var f *os.File
 	if create {
 		f, err = os.Create(filepath.Join(fs.wdir, u))
@@ -70,13 +72,20 @@ func (fs *FileSystem) Open(name string) (*File, error) {
 }
 
 func (fs *FileSystem) Remove(name string) error {
-	n, err := fs.root.remove(name, true)
+	u, err := fs.root.get(name)
 	if err != nil {
 		return err
 	}
-	return os.Remove(filepath.Join(fs.wdir, n.uuid))
+	if err := fs.root.remove(name); err != nil {
+		return err
+	}
+	return os.Remove(filepath.Join(fs.wdir, u))
 }
 
 func (fs *FileSystem) Finalize() (string, error) {
 	return "", nil
+}
+
+func (fs *FileSystem) Destroy() error {
+	return os.RemoveAll(fs.wdir)
 }
