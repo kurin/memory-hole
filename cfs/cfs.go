@@ -17,7 +17,6 @@
 package cfs
 
 import (
-	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -301,7 +300,6 @@ func (d *data) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	var out []fuse.Dirent
 	ls, err := d.fs.List(d.path)
 	if err != nil {
-		fmt.Println(err)
 		return nil, err
 	}
 	for _, e := range ls {
@@ -320,19 +318,27 @@ func (d *data) Lookup(ctx context.Context, name string) (fs.Node, error) {
 		return nil, err
 	}
 	var found bool
+	var dir bool
 	for _, e := range ls {
 		if e.Name == name {
 			found = true
+			dir = e.Directory
 			break
 		}
 	} // TODO: easy speedups here
 	if !found {
 		return nil, fuse.ENOENT
 	}
-	return &data{
-		uuid: d.uuid,
-		path: filepath.Join(d.path, name),
+	if dir {
+		return &data{
+			uuid: d.uuid,
+			path: filepath.Join(d.path, name),
+			fs:   d.fs,
+		}, nil
+	}
+	return &file{
 		fs:   d.fs,
+		path: filepath.Join(d.path, name),
 	}, nil
 }
 
@@ -345,4 +351,47 @@ func (d *data) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, erro
 		path: filepath.Join(d.path, req.Name),
 		fs:   d.fs,
 	}, nil
+}
+
+func (d *data) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
+	if req.Dir {
+		return d.fs.Rmdir(filepath.Join(d.path, req.Name))
+	}
+	return d.fs.Remove(filepath.Join(d.path, req.Name))
+}
+
+func (d *data) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.CreateResponse) (fs.Node, fs.Handle, error) {
+	f, err := d.fs.Open(filepath.Join(d.path, req.Name))
+	if err != nil {
+		return nil, nil, err
+	}
+	r := &file{
+		f:    f,
+		fs:   d.fs,
+		path: filepath.Join(d.path, req.Name),
+	}
+	return r, r, nil
+}
+
+type file struct {
+	path string
+	f    *afs.File
+	fs   *afs.FileSystem
+}
+
+func (f *file) Attr(ctx context.Context, attr *fuse.Attr) error {
+	fi, err := f.fs.Stat(f.path)
+	if err != nil {
+		return err
+	}
+	attr.Size = uint64(fi.Size())
+	attr.Mode = 0600
+	return nil
+}
+
+func (f *file) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
+	if f.f != nil {
+		return f.f.Close()
+	}
+	return nil
 }
