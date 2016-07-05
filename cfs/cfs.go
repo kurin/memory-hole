@@ -17,11 +17,14 @@
 package cfs
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/boltdb/bolt"
+	"github.com/kurin/memory-hole/afs"
 	"github.com/twinj/uuid"
 
 	"bazil.org/fuse"
@@ -33,6 +36,8 @@ type FS struct {
 	WorkDir    string
 	Mountpoint string
 
+	mux  sync.RWMutex
+	fss  map[string]*afs.FileSystem
 	conn *fuse.Conn
 	db   *bolt.DB
 }
@@ -68,13 +73,32 @@ func (f *FS) Close() error {
 }
 
 func (f *FS) Root() (fs.Node, error) {
+	var nilmap bool
+	f.mux.RLock()
+	if f.fss == nil {
+		nilmap = true
+	}
+	f.mux.RUnlock()
+	if nilmap {
+		f.mux.Lock()
+		if f.fss == nil {
+			f.fss = make(map[string]*afs.FileSystem)
+		}
+		f.mux.Unlock()
+	}
 	return &root{
-		db: f.db,
+		wdir: f.WorkDir,
+		db:   f.db,
+		mux:  &f.mux,
+		fss:  f.fss,
 	}, nil
 }
 
 type root struct {
-	db *bolt.DB
+	wdir string
+	db   *bolt.DB
+	mux  *sync.RWMutex
+	fss  map[string]*afs.FileSystem
 }
 
 func (r *root) Attr(ctx context.Context, attr *fuse.Attr) error {
@@ -98,8 +122,20 @@ func (r *root) Lookup(ctx context.Context, name string) (fs.Node, error) {
 			return nil
 		}
 		u := uuid.New(id)
+		r.mux.Lock()
+		fs, ok := r.fss[u.String()]
+		if !ok {
+			nfs, err := afs.Open(r.wdir, u.String())
+			if err != nil {
+				return err
+			}
+			r.fss[u.String()] = nfs
+			fs = nfs
+		}
+		r.mux.Unlock()
 		a = &archive{
 			uuid: u.String(),
+			fs:   fs,
 		}
 		return nil
 	}); err != nil {
@@ -114,6 +150,7 @@ func (r *root) Lookup(ctx context.Context, name string) (fs.Node, error) {
 
 func (r *root) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, error) {
 	u := uuid.NewV4()
+	var fs *afs.FileSystem
 	if err := r.db.Update(func(tx *bolt.Tx) error {
 		ab, err := tx.CreateBucketIfNotExists([]byte("archives"))
 		if err != nil {
@@ -123,6 +160,15 @@ func (r *root) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, erro
 		if err != nil {
 			return err
 		}
+		// Do this in the DB transaction so that any errors roll back the DB.
+		nfs, err := afs.Open(r.wdir, u.String())
+		fs = nfs
+		if err != nil {
+			return err
+		}
+		r.mux.Lock()
+		r.fss[u.String()] = fs
+		r.mux.Unlock()
 		return b.Put([]byte("uuid"), u.Bytes())
 	}); err != nil {
 		return nil, err
@@ -130,6 +176,7 @@ func (r *root) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, erro
 	return &archive{
 		final: false,
 		uuid:  u.String(),
+		fs:    fs,
 	}, nil
 }
 
@@ -166,6 +213,14 @@ func (r *root) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 		if sb == nil {
 			return fuse.ENOENT
 		}
+		u := uuid.New(sb.Get([]byte("uuid")))
+		r.mux.Lock()
+		if fs, ok := r.fss[u.String()]; ok {
+			if err := fs.Destroy(); err != nil {
+				return err
+			}
+		}
+		r.mux.Unlock()
 		return b.DeleteBucket([]byte(req.Name))
 	}); err != nil {
 		return err
@@ -176,6 +231,7 @@ func (r *root) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 type archive struct {
 	final bool
 	uuid  string
+	fs    *afs.FileSystem
 }
 
 func (a *archive) Attr(ctx context.Context, attr *fuse.Attr) error {
@@ -203,6 +259,8 @@ func (a *archive) Lookup(ctx context.Context, name string) (fs.Node, error) {
 	case "data":
 		return &data{
 			uuid: a.uuid,
+			path: "/",
+			fs:   a.fs,
 		}, nil
 	}
 	return nil, fuse.ENOENT
@@ -210,7 +268,7 @@ func (a *archive) Lookup(ctx context.Context, name string) (fs.Node, error) {
 
 type done struct{}
 
-var donemsg = []byte("Remove this file to finalize this archive.\n")
+var donemsg = []byte("Remove this file to finalize the archive.\n")
 
 func (done) Attr(ctx context.Context, attr *fuse.Attr) error {
 	attr.Size = uint64(len(donemsg))
@@ -230,9 +288,28 @@ func (done) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResp
 
 type data struct {
 	uuid string
+	path string
+	fs   *afs.FileSystem
 }
 
-func (data) Attr(ctx context.Context, attr *fuse.Attr) error {
+func (d *data) Attr(ctx context.Context, attr *fuse.Attr) error {
 	attr.Mode = os.ModeDir | 0700
 	return nil
+}
+
+func (d *data) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
+	var out []fuse.Dirent
+	ls, err := d.fs.List(d.path)
+	if err != nil {
+		fmt.Println(err)
+		return nil, err
+	}
+	for _, e := range ls {
+		t := fuse.DT_File
+		if e.Directory {
+			t = fuse.DT_Dir
+		}
+		out = append(out, fuse.Dirent{Name: e.Name, Type: t})
+	}
+	return out, nil
 }
