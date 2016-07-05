@@ -78,6 +78,10 @@ func (fs *FileSystem) Mkdir(name string) error {
 	return fs.root.mkdir(name)
 }
 
+func (fs *FileSystem) Rmdir(name string) error {
+	return fs.root.remove(name)
+}
+
 func (fs *FileSystem) Remove(name string) error {
 	u, err := fs.root.get(name)
 	if err != nil {
@@ -87,6 +91,14 @@ func (fs *FileSystem) Remove(name string) error {
 		return err
 	}
 	return os.Remove(filepath.Join(fs.wdir, u))
+}
+
+func (fs *FileSystem) Stat(name string) (os.FileInfo, error) {
+	u, err := fs.root.get(name)
+	if err != nil {
+		return nil, err
+	}
+	return os.Stat(filepath.Join(fs.wdir, u))
 }
 
 type Entry struct {

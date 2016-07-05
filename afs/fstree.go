@@ -49,6 +49,9 @@ func (t *tdb) init() error {
 func (t *tdb) mkdir(name string) error {
 	path := strings.Trim(name, "/")
 	parts := strings.Split(path, "/")
+	if path == "" {
+		return nil
+	}
 	return t.db.Update(func(tx *bolt.Tx) error {
 		b, err := tx.CreateBucketIfNotExists([]byte("/"))
 		if err != nil {
@@ -179,6 +182,9 @@ func (t *tdb) get(name string) (string, error) {
 			return fmt.Errorf("%s: can't access /", name)
 		}
 		for i := 0; i < len(parts); i++ {
+			if parts[i] == "" {
+				continue
+			}
 			b = b.Bucket([]byte(parts[i]))
 			if b == nil {
 				return fmt.Errorf("%s: can't access %s", name, parts[i])
@@ -213,6 +219,9 @@ func (t *tdb) remove(name string) error {
 			return fmt.Errorf("%s: can't access /", name)
 		}
 		for i := 0; i < len(parts); i++ {
+			if parts[i] == "" {
+				continue
+			}
 			b = b.Bucket([]byte(parts[i]))
 			if b == nil {
 				return fmt.Errorf("%s: can't access %s", name, parts[i])
