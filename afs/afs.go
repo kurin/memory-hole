@@ -50,21 +50,14 @@ func Open(dir, u string) (*FileSystem, error) {
 }
 
 func (fs *FileSystem) Open(name string) (*File, error) {
-	var create bool
 	u, err := fs.root.get(name)
 	if err != nil {
 		u = uuid.NewV4().String()
 		if err := fs.root.add(name, u); err != nil {
 			return nil, err
 		}
-		create = true
 	}
-	var f *os.File
-	if create {
-		f, err = os.Create(filepath.Join(fs.wdir, u))
-	} else {
-		f, err = os.Open(filepath.Join(fs.wdir, u))
-	}
+	f, err := os.OpenFile(filepath.Join(fs.wdir, u), os.O_RDWR, 0600)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +91,14 @@ func (fs *FileSystem) Stat(name string) (os.FileInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	return os.Stat(filepath.Join(fs.wdir, u))
+	fi, err := os.Stat(filepath.Join(fs.wdir, u))
+	if err != nil {
+		return nil, err
+	}
+	return &fileInfo{
+		FileInfo: fi,
+		name:     filepath.Base(name),
+	}, nil
 }
 
 type Entry struct {
