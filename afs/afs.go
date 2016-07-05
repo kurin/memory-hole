@@ -30,8 +30,7 @@ type FileSystem struct {
 	root *tdb
 }
 
-func New(dir string) (*FileSystem, error) {
-	u := uuid.NewV4().String()
+func Open(dir, u string) (*FileSystem, error) {
 	if err := os.MkdirAll(filepath.Join(dir, u), 0700); err != nil {
 		return nil, err
 	}

@@ -15,7 +15,7 @@ func TestWriter(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 	t.Log(dir)
-	fs, err := New(dir)
+	fs, err := Open(dir, "uuid")
 	if err != nil {
 		t.Fatal(err)
 	}
