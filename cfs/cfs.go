@@ -17,6 +17,7 @@
 package cfs
 
 import (
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -389,9 +390,40 @@ func (f *file) Attr(ctx context.Context, attr *fuse.Attr) error {
 	return nil
 }
 
+func (f *file) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenResponse) (fs.Handle, error) {
+	h, err := f.fs.Open(f.path)
+	if err != nil {
+		return nil, err
+	}
+	f.f = h
+	return f, nil
+}
+
 func (f *file) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
 	if f.f != nil {
-		return f.f.Close()
+		mf := f.f
+		f.f = nil
+		return mf.Close()
 	}
 	return nil
+}
+
+func (f *file) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) error {
+	n, err := f.f.WriteAt(req.Data, req.Offset)
+	resp.Size = n
+	return err
+}
+
+func (f *file) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
+	b := make([]byte, req.Size)
+	n, err := f.f.ReadAt(b, req.Offset)
+	if err != nil && err != io.EOF {
+		return err
+	}
+	resp.Data = b[:n]
+	return nil
+}
+
+func (f *file) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
+	return f.f.Sync()
 }
