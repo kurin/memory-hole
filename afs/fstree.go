@@ -33,37 +33,79 @@ const (
 )
 
 func (t *tdb) mkdir(name string) error {
+	path := strings.Trim(name, "/")
+	parts := strings.Split(path, "/")
 	return t.db.Update(func(tx *bolt.Tx) error {
 		b, err := tx.CreateBucketIfNotExists([]byte("/"))
 		if err != nil {
 			return err
 		}
-		for {
-			name = strings.TrimPrefix(name, "/")
-			i := strings.Index(name, "/")
-			var rest string
-			if i != -1 {
-				rest = name[i:]
-				name = name[:i]
-			}
-			b, err := b.CreateBucketIfNotExists([]byte(name))
+		for i := 0; i < len(parts); i++ {
+			piece := parts[i]
+			sb, err := b.CreateBucketIfNotExists([]byte(piece))
 			if err != nil {
 				return err
 			}
+			b = sb
 			bt := b.Get([]byte("type"))
 			if len(bt) == 0 {
 				if err := b.Put([]byte("type"), []byte{dirType}); err != nil {
 					return err
 				}
 			} else if bt[0] != dirType {
-				return fmt.Errorf("%s: not a directory", name)
+				return fmt.Errorf("%s: not a directory", piece)
 			}
-			if rest == "" {
+		}
+		return nil
+	})
+}
+
+type tent struct { // "tree entry"
+	name string
+	dir  bool
+}
+
+func (t *tdb) list(name string) ([]tent, error) {
+	path := strings.Trim(name, "/")
+	parts := strings.Split(path, "/")
+	var out []tent
+	if err := t.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte("/"))
+		if b == nil {
+			return fmt.Errorf("%s: can't access /", name)
+		}
+		for i := 0; i < len(parts); i++ {
+			b = b.Bucket([]byte(parts[i]))
+			if b == nil {
+				return fmt.Errorf("%s: can't access %s", name, parts[i])
+			}
+		}
+		bt := b.Get([]byte("type"))
+		if len(bt) == 0 || bt[0] != dirType {
+			return fmt.Errorf("%s: not a directory", name)
+		}
+		return b.ForEach(func(k, v []byte) error {
+			if v != nil {
 				return nil
 			}
-			name = rest
-		}
-	})
+			sb := b.Bucket(k)
+			if sb == nil {
+				return nil // ???
+			}
+			sbt := sb.Get([]byte("type"))
+			if len(sbt) == 0 {
+				return fmt.Errorf("%s/%s: type-less entry", name, string(k))
+			}
+			out = append(out, tent{
+				dir:  sbt[0] == dirType,
+				name: string(k),
+			})
+			return nil
+		})
+	}); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (t *tdb) add(name, id string) error {

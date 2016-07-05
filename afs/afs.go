@@ -81,10 +81,28 @@ func (fs *FileSystem) Remove(name string) error {
 	return os.Remove(filepath.Join(fs.wdir, u))
 }
 
+type Entry struct {
+	Name      string
+	Directory bool
+}
+
+func (fs *FileSystem) List(name string) ([]Entry, error) {
+	ls, err := fs.root.list(name)
+	if err != nil {
+		return nil, err
+	}
+	var out []Entry
+	for _, e := range ls {
+		out = append(out, Entry{Name: e.name, Directory: e.dir})
+	}
+	return out, nil
+}
+
 func (fs *FileSystem) Finalize() (string, error) {
 	return "", nil
 }
 
 func (fs *FileSystem) Destroy() error {
+	fs.root.db.Close() // chuck error
 	return os.RemoveAll(fs.wdir)
 }

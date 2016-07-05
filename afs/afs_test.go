@@ -5,7 +5,10 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
+	"reflect"
 	"testing"
+
+	"github.com/twinj/uuid"
 )
 
 func TestWriter(t *testing.T) {
@@ -14,31 +17,70 @@ func TestWriter(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(dir)
-	t.Log(dir)
-	fs, err := Open(dir, "uuid")
-	if err != nil {
-		t.Fatal(err)
+
+	table := []struct {
+		files []string
+		dir   string
+		want  []Entry
+	}{
+		{
+			files: []string{
+				"/thing/1",
+				"/thing/2",
+			},
+			dir: "/thing",
+			want: []Entry{
+				{
+					Name: "1",
+				},
+				{
+					Name: "2",
+				},
+			},
+		},
+		{
+			files: []string{
+				"/thing/1",
+				"/thing/2",
+				"/thing/3/ok",
+			},
+			dir: "/thing",
+			want: []Entry{
+				{
+					Name: "1",
+				},
+				{
+					Name: "2",
+				},
+				{
+					Name:      "3",
+					Directory: true,
+				},
+			},
+		},
 	}
-	if err := writeFile(fs, "/file/a", "loopy\n"); err != nil {
-		t.Fatal(err)
+
+	for _, e := range table {
+		fs, err := Open(dir, uuid.NewV4().String())
+		if err != nil {
+			t.Error(err)
+			continue
+		}
+		for _, f := range e.files {
+			if err := writeFile(fs, f, "data\n"); err != nil {
+				t.Error(err)
+				continue
+			}
+		}
+		ls, err := fs.List("/thing")
+		if err != nil {
+			t.Error(err)
+			continue
+		}
+		if !reflect.DeepEqual(ls, e.want) {
+			t.Errorf("bad directory listing: got %#v want %#v", ls, e.want)
+		}
 	}
-	if err := writeFile(fs, "/file/b", "loopier\n"); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeFile(fs, "/file/c", "loopiest\n"); err != nil {
-		t.Fatal(err)
-	}
-	if err := fs.Remove("/file/b"); err != nil {
-		t.Fatal(err)
-	}
-	if err := fs.Remove("/file/d"); err == nil {
-		t.Error("expected an error removing '/file/d', got none")
-	}
-	uuid, err := fs.Finalize()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Log(uuid)
 }
 
 func writeFile(fs *FileSystem, name, body string) error {
