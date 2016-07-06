@@ -57,7 +57,7 @@ func (fs *FileSystem) Open(name string) (*File, error) {
 			return nil, err
 		}
 	}
-	f, err := os.OpenFile(filepath.Join(fs.wdir, u), os.O_RDWR, 0600)
+	f, err := os.OpenFile(filepath.Join(fs.wdir, u), os.O_RDWR|os.O_CREATE, 0600)
 	if err != nil {
 		return nil, err
 	}
@@ -116,6 +116,10 @@ func (fs *FileSystem) List(name string) ([]Entry, error) {
 		out = append(out, Entry{Name: e.name, Directory: e.dir})
 	}
 	return out, nil
+}
+
+func (fs *FileSystem) Rename(from, to string) error {
+	return fs.root.move(from, to)
 }
 
 func (fs *FileSystem) Finalize() (string, error) {
