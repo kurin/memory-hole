@@ -17,11 +17,13 @@
 package cfs
 
 import (
+	"fmt"
 	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/boltdb/bolt"
 	"github.com/kurin/memory-hole/afs"
@@ -293,6 +295,7 @@ type data struct {
 }
 
 func (d *data) Attr(ctx context.Context, attr *fuse.Attr) error {
+	attr.Valid = time.Nanosecond
 	attr.Mode = os.ModeDir | 0700
 	return nil
 }
@@ -313,7 +316,8 @@ func (d *data) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	return out, nil
 }
 
-func (d *data) Lookup(ctx context.Context, name string) (fs.Node, error) {
+func (d *data) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.LookupResponse) (fs.Node, error) {
+	name := req.Name
 	ls, err := d.fs.List(d.path)
 	if err != nil {
 		return nil, err
@@ -330,17 +334,24 @@ func (d *data) Lookup(ctx context.Context, name string) (fs.Node, error) {
 	if !found {
 		return nil, fuse.ENOENT
 	}
+	var node fs.Node
 	if dir {
-		return &data{
+		node = &data{
 			uuid: d.uuid,
 			path: filepath.Join(d.path, name),
 			fs:   d.fs,
-		}, nil
+		}
+	} else {
+		node = &file{
+			fs:   d.fs,
+			path: filepath.Join(d.path, name),
+		}
 	}
-	return &file{
-		fs:   d.fs,
-		path: filepath.Join(d.path, name),
-	}, nil
+	if err := node.Attr(ctx, &resp.Attr); err != nil {
+		return nil, err
+	}
+	resp.EntryValid = 1
+	return node, nil
 }
 
 func (d *data) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, error) {
@@ -372,6 +383,14 @@ func (d *data) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.C
 		path: filepath.Join(d.path, req.Name),
 	}
 	return r, r, nil
+}
+
+func (d *data) Rename(ctx context.Context, req *fuse.RenameRequest, newDir fs.Node) error {
+	nd, ok := newDir.(*data)
+	if !ok {
+		return fmt.Errorf("can't move files out of the data dir")
+	}
+	return d.fs.Rename(filepath.Join(d.path, req.OldName), filepath.Join(nd.path, req.NewName))
 }
 
 type file struct {
