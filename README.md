@@ -24,6 +24,3 @@ and after this process, but the archive will be read-only as soon as the done
 file is removed.
 
 TODO: add easy support for rsync
-
-====
-This is not an official Google product.
